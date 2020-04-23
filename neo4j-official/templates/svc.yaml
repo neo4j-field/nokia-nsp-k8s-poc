@@ -1,0 +1,51 @@
+{{- range $i := until (int .Values.coreServers) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "neo4j.fullname" $ }}-discovery-{{ $i }}
+  labels:
+spec:
+  publishNotReadyAddresses: true
+  type: NodePort
+  ports:
+    - name: discovery-{{ $i }}
+      nodePort: {{ add $.Values.discoveryNodePort $i }}
+      port: 5000
+      targetPort: 5000
+  selector:
+    statefulset.kubernetes.io/pod-name: neo4j-neo4j-core-{{ $i }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "neo4j.fullname" $ }}-transaction-{{ $i }}
+spec:
+  publishNotReadyAddresses: true
+  type: NodePort
+  ports:
+    - name: transaction-{{ $i }}
+      nodePort: {{ add $.Values.transactionNodePort $i }}
+      port: 6000
+      targetPort: 6000
+  selector:
+    statefulset.kubernetes.io/pod-name: neo4j-neo4j-core-{{ $i }}
+    
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "neo4j.fullname" $ }}-raft-{{ $i }}
+spec:
+  publishNotReadyAddresses: true
+  type: NodePort
+  ports:
+    - name: raft-{{ $i }}
+      nodePort: {{ add $.Values.raftNodePort $i }}
+      port: 7000
+      targetPort: 7000
+  selector:
+    statefulset.kubernetes.io/pod-name: neo4j-neo4j-core-{{ $i }}
+
+{{- end }}
