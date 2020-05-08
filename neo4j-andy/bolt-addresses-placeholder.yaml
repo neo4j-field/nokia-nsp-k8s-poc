@@ -1,0 +1,9 @@
+---
+# This creates an empty core address config. If you already have a dolt address config applying this will overwrite it
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: graph-name-neo4j-core-address-config
+data:
+  empty: ""
+---

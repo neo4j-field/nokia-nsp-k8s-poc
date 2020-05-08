@@ -1,0 +1,305 @@
+---
+# Source: neo4j/templates/core-statefulset.yaml
+apiVersion: "apps/v1beta2"
+kind: StatefulSet
+metadata:
+  name: "k8s-2-graph-name-neo4j-core"
+spec:
+  podManagementPolicy: Parallel
+  serviceName: k8s-2-graph-name-neo4j
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: "graph-name"
+      app.kubernetes.io/name: neo4j
+      app.kubernetes.io/component: core
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: "graph-name"
+        app.kubernetes.io/name: neo4j
+        app.kubernetes.io/component: core
+        neo4j.com/cluster: "graph-name-neo4j"
+    spec:
+      hostAliases:
+        - ip: "34.91.174.200"
+          hostnames:
+            - "k8s-1-graph-name-neo4j-discovery-0.remote"
+            - "k8s-1-graph-name-neo4j-discovery-0.default.svc.cluster.local"
+        - ip: "34.91.13.101"
+          hostnames:
+            - "k8s-1-graph-name-neo4j-discovery-1.remote"
+            - "k8s-1-graph-name-neo4j-discovery-1.default.svc.cluster.local"
+        - ip: "35.204.130.255"
+          hostnames:
+            - "k8s-1-graph-name-neo4j-discovery-2.remote"
+            - "k8s-1-graph-name-neo4j-discovery-2.default.svc.cluster.local"
+      serviceAccountName: "neo4j-sa"
+      containers:
+        - name: "k8s-2-graph-name-neo4j"
+          image: "neo4j:3.5.17-enterprise"
+          imagePullPolicy: "IfNotPresent"
+          # Most pod config is factored into a different configMap, which is user overrideable.
+          envFrom:
+            - configMapRef:
+                name: graph-name-neo4j-core-config
+            - configMapRef:
+                name: graph-name-neo4j-core-address-config
+          env:
+            - name: NEO4J_SECRETS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: graph-name-neo4j-secrets
+                  key: neo4j-password
+          command:
+            - "/bin/bash"
+            - "-c"
+            - |
+              # Local hostname (graph-neo4j-core-0) converted to graph_neo4j_core_0
+              # So that if a var is defined graph_neo4j_core_0_MYSETTING
+              # its host-specific value will override whatever the default MYSETTING
+              # is in the environment.
+              # In this way we can give a single configmap to all 3 pods in a stateful
+              # set, and still be able to do per-pod bespoke config.
+              export core_idx=$(hostname | sed 's|.*-||')
+              export override_prefix=$(hostname | sed s/-/_/g)
+              export HOST=$(hostname -f)
+
+              declare -A NEO4J_SETTINGS
+
+              # HTTPS
+              NEO4J_SETTINGS[dbms_connector_https_enabled]=true
+              # Default settings values; either inherit from outward settings,
+              # or, lacking any definition, take the local host
+              NEO4J_SETTINGS[NEO4J_dbms_default__advertised__address]="k8s-2-graph-name-neo4j-discovery-${core_idx}.default.svc.cluster.local"
+              NEO4J_SETTINGS[NEO4J_dbms_connector_bolt_advertised__address]=${NEO4J_dbms_connector_bolt_advertised__address:-$HOST}:7687
+              NEO4J_SETTINGS[NEO4J_dbms_connector_http_advertised__address]=${NEO4J_dbms_connector_http_advertised__address:-$HOST}:7474
+              NEO4J_SETTINGS[NEO4J_dbms_connector_https_advertised__address]=${NEO4J_dbms_connector_https_advertised__address:-$HOST}:7473
+
+
+              echo "Core id = $core_idx"
+              echo "Configuration override prefix = $override_prefix"
+
+              # Check to see if a particular env var has a host-specific override.  If it does,
+              # return the override.  Otherwise return the default value.
+              getSettingValue() {
+                # Setting key: $1
+                # Default value: $2
+                # Return: modify $SETTING_VALUE
+                export override_varname=$override_prefix"_"$1
+                echo "Checking for override $override_varname"
+                if [ -z "${!override_varname}" ] ; then
+                    SETTING_VALUE=$2
+                else
+                    SETTING_VALUE=${!override_varname}
+                fi
+              }
+
+              # For each config item, set an env var to the appropriate
+              # metadata value or default value.  This sets us up for envsubst
+              for setting in "${!NEO4J_SETTINGS[@]}" ; do
+                echo setting $setting
+                echo default
+                getSettingValue $setting "${NEO4J_SETTINGS[$setting]}"
+                echo "Setting $setting to $SETTING_VALUE"
+                echo ""
+
+                # Set the variable named setting to the result.
+                # See: https://stackoverflow.com/questions/9714902/how-to-use-a-variables-value-as-another-variables-name-in-bash
+                export $setting="$SETTING_VALUE"
+              done
+
+              # These settings are *not* overrideable, because they must match the addresses the
+              # core members see to avoid akka rejections, and to facilitate basic cluster formation.
+              export NEO4J_causal__clustering_kubernetes_label__selector="neo4j.com/cluster=graph-name-neo4j,neo4j.com/discovery=true"
+              export NEO4J_causal__clustering_kubernetes_service__port__name="discovery"
+              export NEO4J_causal__clustering_discovery__advertised__address="k8s-2-graph-name-neo4j-discovery-${core_idx}.default.svc.cluster.local:5000"
+              export NEO4J_causal__clustering_transaction__advertised__address="k8s-2-graph-name-neo4j-discovery-${core_idx}.default.svc.cluster.local:6000"
+              export NEO4J_causal__clustering_raft__advertised__address="k8s-2-graph-name-neo4j-discovery-${core_idx}.default.svc.cluster.local:7000"
+
+              if [ "${AUTH_ENABLED:-}" == "true" ]; then
+                export NEO4J_AUTH="neo4j/${NEO4J_SECRETS_PASSWORD}"
+              else
+                export NEO4J_AUTH="none"
+              fi
+
+              echo "Starting Neo4j CORE on $HOST"
+              exec /docker-entrypoint.sh "neo4j"
+          ports:
+            - containerPort: 5000
+              name: discovery
+            - containerPort: 7000
+              name: raft
+            - containerPort: 6000
+              name: tx
+            - containerPort: 7474
+              name: browser
+            - containerPort: 7687
+              name: bolt
+          volumeMounts:
+            - name: datadir
+              mountPath: "/data"
+            - name: plugins
+              mountPath: /plugins
+          readinessProbe:
+            tcpSocket:
+              port: 7687
+            initialDelaySeconds: 30
+            periodSeconds: 3
+          livenessProbe:
+            initialDelaySeconds: 60
+            tcpSocket:
+              port: 7687
+          resources:
+            {}
+      volumes:
+        - name: datadir
+          emptyDir: {}
+        - name: plugins
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-2-graph-name-neo4j
+  labels:
+    app.kubernetes.io/name: neo4j
+    app.kubernetes.io/component: core
+    app.kubernetes.io/instance: "graph-name"
+    neo4j.com/cluster: graph-name-neo4j
+spec:
+  clusterIP: None
+  ports:
+    - name: http
+      port: 7474
+      targetPort: 7474
+    - name: bolt
+      port: 7687
+      targetPort: 7687
+    - name: https
+      port: 7473
+      targetPort: 7473
+  selector:
+    app.kubernetes.io/name: neo4j
+    app.kubernetes.io/instance: "graph-name"
+    app.kubernetes.io/component: core
+---
+# Source: neo4j/templates/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-2-graph-name-neo4j-discovery-0
+  labels:
+    neo4j.com/cluster: graph-name-neo4j
+    neo4j.com/role: local-member-address
+    neo4j.com/discovery: "true"
+spec:
+  publishNotReadyAddresses: true
+  clusterIP: None
+  ports:
+    - name: discovery
+      port: 5000
+      targetPort: 5000
+    - name: transaction
+      port: 6000
+      targetPort: 6000
+    - name: raft
+      port: 7000
+      targetPort: 7000
+  selector:
+    statefulset.kubernetes.io/pod-name: "k8s-2-graph-name-neo4j-core-0"
+---
+# Source: neo4j/templates/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-2-graph-name-neo4j-discovery-1
+  labels:
+    neo4j.com/cluster: graph-name-neo4j
+    neo4j.com/role: local-member-address
+    neo4j.com/discovery: "true"
+spec:
+  publishNotReadyAddresses: true
+  clusterIP: None
+  ports:
+    - name: discovery
+      port: 5000
+      targetPort: 5000
+    - name: transaction
+      port: 6000
+      targetPort: 6000
+    - name: raft
+      port: 7000
+      targetPort: 7000
+  selector:
+    statefulset.kubernetes.io/pod-name: "k8s-2-graph-name-neo4j-core-1"
+---
+# Source: neo4j/templates/svc-external.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-1-graph-name-neo4j-discovery-0
+  labels:
+    neo4j.com/cluster: graph-name-neo4j
+    neo4j.com/role: remote-member-address
+    neo4j.com/discovery: "true"
+spec:
+  type: ExternalName
+  externalName: k8s-1-graph-name-neo4j-discovery-0.remote
+  ports:
+    - name: discovery
+      port: 5000
+      targetPort: 5000
+    - name: transaction
+      port: 6000
+      targetPort: 6000
+    - name: raft
+      port: 7000
+      targetPort: 7000
+---
+# Source: neo4j/templates/svc-external.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-1-graph-name-neo4j-discovery-1
+  labels:
+    neo4j.com/cluster: graph-name-neo4j
+    neo4j.com/role: remote-member-address
+    neo4j.com/discovery: "true"
+spec:
+  type: ExternalName
+  externalName: k8s-1-graph-name-neo4j-discovery-1.remote
+  ports:
+    - name: discovery
+      port: 5000
+      targetPort: 5000
+    - name: transaction
+      port: 6000
+      targetPort: 6000
+    - name: raft
+      port: 7000
+      targetPort: 7000
+---
+# Source: neo4j/templates/svc-external.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-1-graph-name-neo4j-discovery-2
+  labels:
+    neo4j.com/cluster: graph-name-neo4j
+    neo4j.com/role: remote-member-address
+    neo4j.com/discovery: "true"
+spec:
+  type: ExternalName
+  externalName: k8s-1-graph-name-neo4j-discovery-2.remote
+  ports:
+    - name: discovery
+      port: 5000
+      targetPort: 5000
+    - name: transaction
+      port: 6000
+      targetPort: 6000
+    - name: raft
+      port: 7000
+      targetPort: 7000
+---

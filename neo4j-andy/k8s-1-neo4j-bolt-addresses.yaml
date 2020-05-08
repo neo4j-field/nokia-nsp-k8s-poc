@@ -1,0 +1,16 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: graph-name-neo4j-core-address-config
+data:
+  k8s_1_graph_name_neo4j_core_0_NEO4J_dbms_connector_bolt_advertised__address:  34.91.219.41:7687
+  k8s_1_graph_name_neo4j_core_0_NEO4J_dbms_connector_http_advertised__address:  34.91.219.41:7474
+  k8s_1_graph_name_neo4j_core_0_NEO4J_dbms_connector_https_advertised__address: 34.91.219.41:7473
+  k8s_1_graph_name_neo4j_core_1_NEO4J_dbms_connector_bolt_advertised__address:  35.204.29.226:7687
+  k8s_1_graph_name_neo4j_core_1_NEO4J_dbms_connector_http_advertised__address:  35.204.29.226:7474
+  k8s_1_graph_name_neo4j_core_1_NEO4J_dbms_connector_https_advertised__address: 35.204.29.226:7473
+  k8s_1_graph_name_neo4j_core_2_NEO4J_dbms_connector_bolt_advertised__address:  34.90.69.181:7687
+  k8s_1_graph_name_neo4j_core_2_NEO4J_dbms_connector_http_advertised__address:  34.90.69.181:7474
+  k8s_1_graph_name_neo4j_core_2_NEO4J_dbms_connector_https_advertised__address: 34.90.69.181:7473
+---
